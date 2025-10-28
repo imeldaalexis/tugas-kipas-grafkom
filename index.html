@@ -67,7 +67,7 @@
   varying vec3 v_worldPos;
   varying vec2 v_uv;
 
-  uniform vec3 u_color;
+  uniform vec4 u_color;
   uniform vec3 u_lightPos;
   uniform vec3 u_viewPos;
   uniform vec3 u_ambient;
@@ -87,7 +87,7 @@
     float NdotL = max(dot(N, L), 0.0);
     float spec = pow(max(dot(N, H), 0.0), u_shininess);
 
-    vec3 baseColor = u_color * u_diffuseColor;
+    vec3 baseColor = u_color.rgb * u_diffuseColor;
     if (u_useTexture) {
       vec3 tex = texture2D(u_sampler0, v_uv).rgb;
       baseColor *= tex;
@@ -98,7 +98,7 @@
     vec3 specular = (NdotL > 0.0 ? spec : 0.0) * u_specularColor;
 
     vec3 color = ambient + diffuse + specular;
-    gl_FragColor = vec4(color, 1.0);
+    gl_FragColor = vec4(color, u_color.a);
   }
   </script>
 </head>

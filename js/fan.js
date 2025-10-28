@@ -21,7 +21,11 @@
   window.addEventListener('resize', resizeCanvasToDisplaySize);
 
   gl.enable(gl.DEPTH_TEST);
-  gl.clearColor(0.06, 0.06, 0.08, 1.0);
+  gl.clearColor(1, 1, 1, 1.0);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  
+
 
   // ====== Shader Compile/Link ======
   function compileShader(src, type) {
@@ -178,6 +182,82 @@
     };
   }
 
+  // create a cylinder mesh (compatible with your existing createMesh(data))
+  function createCylinder(radialSubdiv = 32, radius = 1, height = 1) {
+    const positions = [];
+    const normals = [];
+    const uvs = [];
+    const indices = [];
+
+    const halfH = height / 2;
+
+    // side vertices (top/bottom rings interleaved)
+    for (let i = 0; i <= radialSubdiv; i++) {
+      const t = i / radialSubdiv;
+      const theta = t * Math.PI * 2;
+      const x = Math.cos(theta);
+      const z = Math.sin(theta);
+
+      // top ring
+      positions.push(radius * x, +halfH, radius * z);
+      normals.push(x, 0, z);
+      uvs.push(t, 1);
+
+      // bottom ring
+      positions.push(radius * x, -halfH, radius * z);
+      normals.push(x, 0, z);
+      uvs.push(t, 0);
+    }
+
+    // side indices
+    for (let i = 0; i < radialSubdiv; i++) {
+      const top1 = i * 2;
+      const bot1 = top1 + 1;
+      const top2 = top1 + 2;
+      const bot2 = top1 + 3;
+      // two triangles per quad
+      indices.push(top1, bot1, top2);
+      indices.push(bot1, bot2, top2);
+    }
+
+    // add cap center vertices
+    const topCenterIndex = positions.length / 3;
+    positions.push(0, +halfH, 0);
+    normals.push(0, 1, 0);
+    uvs.push(0.5, 0.5);
+
+    const bottomCenterIndex = positions.length / 3;
+    positions.push(0, -halfH, 0);
+    normals.push(0, -1, 0);
+    uvs.push(0.5, 0.5);
+
+    // cap triangles
+    for (let i = 0; i < radialSubdiv; i++) {
+      const next = (i + 1) % radialSubdiv;
+      const topV1 = i * 2;
+      const topV2 = next * 2;
+      const botV1 = i * 2 + 1;
+      const botV2 = next * 2 + 1;
+
+      // top cap (wind CCW looking from +Y)
+      indices.push(topV1, topV2, topCenterIndex);
+
+      // bottom cap (wind CCW looking from -Y)
+      indices.push(botV2, botV1, bottomCenterIndex);
+    }
+
+    return createMesh({
+      positions: new Float32Array(positions),
+      normals: new Float32Array(normals),
+      uvs: new Float32Array(uvs),
+      indices: new Uint16Array(indices)
+    });
+  }
+
+
+
+
+
   function createMesh(data) {
     const vao = {};
     // interleave pos+normal+uv
@@ -208,7 +288,9 @@
 
   const cubeMesh = createMesh(createCube());
   const sphereMesh = createMesh(createSphere(24, 32, 1));
-
+    // create the cylinder mesh once (tweak height/radialSubdiv as you like)
+  const cylinderMesh = createCylinder(48, 1.0, 1.0);
+  
   function bindAndDraw(mesh) {
     gl.bindBuffer(gl.ARRAY_BUFFER, mesh.vertexBuffer);
     gl.vertexAttribPointer(loc.a_position, 3, gl.FLOAT, false, mesh.stride, mesh.posOff);
@@ -252,17 +334,22 @@
   function pop() { model = stack.pop(); }
 
   function setWorldAndColor(color, useTex) {
-    gl.uniformMatrix4fv(loc.u_world, false, model);
-    mat3.normalFromMat4(normalMat, model);
-    gl.uniformMatrix3fv(loc.u_normalMatrix, false, normalMat);
-    gl.uniform3fv(loc.u_color, color);
-    gl.uniform1i(loc.u_useTexture, useTex && textureReady ? 1 : 0);
-    if (useTex && textureReady) {
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.uniform1i(loc.u_sampler0, 0);
-    }
+  gl.uniformMatrix4fv(loc.u_world, false, model);
+  mat3.normalFromMat4(normalMat, model);
+  gl.uniformMatrix3fv(loc.u_normalMatrix, false, normalMat);
+
+  if (color.length === 3)
+    gl.uniform4f(loc.u_color, color[0], color[1], color[2], 1.0);
+  else
+    gl.uniform4f(loc.u_color, color[0], color[1], color[2], color[3]);
+
+  gl.uniform1i(loc.u_useTexture, useTex && textureReady ? 1 : 0);
+  if (useTex && textureReady) {
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.uniform1i(loc.u_sampler0, 0);
   }
+}
 
   // ====== Animation Controls ======
   let running = true;
@@ -271,7 +358,7 @@
   let lightingEnabled = true;
 
   const yawMax = glMatrix.toRadian(30); // ±30°
-  const yawSpeed = 0.8;        // Hz
+  const yawSpeed = 0.05;        // Hz
   const bladeRPM = 180;        // rotations per minute
   let bladeAngle = 0;
 
@@ -295,53 +382,59 @@
   });
 
   // ====== Draw Fan (Hierarchical) ======
-  function drawFan(timeSec, dt) {
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    mat4.identity(model);
+function drawFan(timeSec, dt) {
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  mat4.identity(model);
 
-    // ---- Arm1: osilasi yaw ----
-    const armLen = 2.5, armThick = 0.12;
-    const yaw = Math.sin(timeSec * 2.0 * Math.PI * yawSpeed) * yawMax;
+  // ---- Arm1: osilasi yaw ----
+  const armLen = 2.5, armThick = 0.15;
+  const yaw = Math.sin(timeSec * 2.0 * Math.PI * yawSpeed) * yawMax;
 
+  push();
+    // base/pole
     push();
-      // base/pole (opsional)
-      push();
-        mat4.translate(model, model, [0, -0.6, 0]);
-        mat4.scale(model, model, [0.15, 0.6, 0.15]);
-        setWorldAndColor([0.25,0.25,0.28], false);
-        bindAndDraw(cubeMesh);
-      pop();
+      mat4.translate(model, model, [0, 0.5, 0]);
+      mat4.scale(model, model, [0.15, 0.6, 0.15]);
+      setWorldAndColor([0.25,0.25,0.28], false);
+      bindAndDraw(sphereMesh);
+    pop();
 
-      // pivot arm di (0,1,0)
-      mat4.translate(model, model, [0, 1.0, 0]);
-      mat4.rotateY(model, model, yaw);
+    // pivot arm di (0,1,0)
+    mat4.translate(model, model, [0, 1.0, 0]);
+    mat4.rotateY(model, model, yaw);
 
-      // arm sebagai box sepanjang +Z
-      push();
-        mat4.translate(model, model, [0, 0, armLen/2]);
-        mat4.scale(model, model, [armThick, armThick, armLen]);
-        setWorldAndColor([0.7,0.7,0.75], false);
-        bindAndDraw(cubeMesh);
-      pop();
+    // arm sebagai box sepanjang +Z
+    push();
+      mat4.translate(model, model, [0, 0, armLen/2 * 0.2]);
+      mat4.scale(model, model, [armThick, armThick, armLen]);
+      setWorldAndColor([0.7,0.7,0.75], false);
+      bindAndDraw(cubeMesh);
+    pop();
 
-      // ---- Cage/Housing: pitch ----
-      mat4.translate(model, model, [0, 0, armLen]);
-      mat4.rotateX(model, model, cagePitch);
+    // ---- Cage/Housing: pitch ----
+    mat4.translate(model, model, [0, 0, armLen]);
+    mat4.rotateX(model, model, cagePitch);
 
-      // Cage (sphere) – bisa diganti grid kawat nanti
-      const cageRadius = 0.8;
-      push();
-        mat4.scale(model, model, [cageRadius, cageRadius, cageRadius]);
-        setWorldAndColor([0.45,0.48,0.52], texEnabled);
-        bindAndDraw(sphereMesh);
-      pop();
+    // Save the cage base transform (so children inherit it)
+    const cageBase = mat4.clone(model);
 
-      // ---- Hub + Blades: roll spin ----
-      // hub kecil
+    // cage parameters
+    const cageRadius = 2.0;
+    const cageThickness = 0.5;
+    const cageFlatten = 0.5;
+    const cageColor = [0.45, 0.48, 0.52, 0.25];
+
+    // ---------------------------
+    // 1) Draw Hub + Blades (opaque)
+    // ---------------------------
+    push();
+      model = mat4.clone(cageBase);
+
+      // hub
       push();
         const hubScale = [0.18, 0.18, 0.18];
         mat4.scale(model, model, hubScale);
-        setWorldAndColor([0.2,0.2,0.22], false);
+        setWorldAndColor([0.2, 0.2, 0.22, 1.0], false);
         bindAndDraw(cubeMesh);
       pop();
 
@@ -349,26 +442,82 @@
       if (running) {
         bladeAngle += dt * (bladeRPM/60) * 2*Math.PI;
       }
+
       push();
         mat4.rotateZ(model, model, bladeAngle);
-
         const bladeCount = 3;
-        const bladeLen = 1.1;
+        const bladeLen = 1.45;
         const bladeWid = 0.25;
-        for (let i=0;i<bladeCount;i++){
+
+        for (let i = 0; i < bladeCount; i++) {
           push();
-            const theta = i * (2*Math.PI/bladeCount);
+            const theta = i * (2*Math.PI / bladeCount);
             mat4.rotateZ(model, model, theta);
-            mat4.translate(model, model, [bladeLen*0.6, 0, 0]); // sepanjang X
-            mat4.scale(model, model, [bladeLen, bladeWid, 0.06]);
-            setWorldAndColor([0.75,0.75,0.78], texEnabled);
-            bindAndDraw(cubeMesh);
+            mat4.translate(model, model, [bladeLen * 0.6, 0, 0]);
+            mat4.scale(model, model, [bladeLen * 0.7, bladeWid, 0.08]);
+            setWorldAndColor([0.75, 0.75, 0.78, 1.0], texEnabled);
+            bindAndDraw(sphereMesh);
           pop();
         }
       pop();
+    pop(); // end of hub+blades group
 
+    // ---------------------------
+    // 2) Draw Cage (transparent)
+    // ---------------------------
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);
+
+    // single cage dome centered around the blades
+    push();
+      model = mat4.clone(cageBase);
+
+      // move it slightly forward/back if needed (depends on blade center)
+      mat4.translate(model, model, [0, 0, 0]); // 0 means blades are roughly centered already
+      mat4.scale(model, model, [cageRadius, cageRadius, cageRadius * cageFlatten]);
+      setWorldAndColor([0.45, 0.48, 0.52, 0.25], false);
+      bindAndDraw(sphereMesh);
     pop();
-  }
+
+    // motor housing (small sphere attached behind cage)
+    // motor housing (cylindrical body)
+    push();
+      model = mat4.clone(cageBase);
+      mat4.translate(model, model, [0, 0, -cageRadius * cageFlatten - 0.2]);
+      mat4.rotateX(model, model, Math.PI / 2); // rotate so circular sides wrap around Y
+      mat4.scale(model, model, [cageRadius * 0.25, cageRadius * 0.7, cageRadius * 0.25]);
+      setWorldAndColor([0.3, 0.32, 0.35, 1.0], false);
+      bindAndDraw(cylinderMesh);
+    pop();
+
+
+    // rim ring
+    push();
+      model = mat4.clone(cageBase);
+      mat4.scale(model, model, [cageRadius * 1.025, cageRadius * 1.025, cageThickness]);
+      setWorldAndColor([0.4, 0.4, 0.45, 0], false);
+      bindAndDraw(sphereMesh);
+    pop();
+
+    // optional rings
+    const ringCount = 10;
+    for (let i = 0; i < ringCount; i++) {
+      const r = cageRadius * (0.3 + 0.7 * i / ringCount);
+      push();
+        model = mat4.clone(cageBase);
+        mat4.scale(model, model, [r, r, 0.02]);
+        setWorldAndColor([0.5, 0.5, 0.55, 0], false);
+        bindAndDraw(sphereMesh);
+      pop();
+    }
+
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+  pop(); // end main fan group
+}
+
+
 
   // ====== Main Loop ======
   let last = 0;
