@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <title>Tugas 2 WebGL – Kipas Angin (Hierarchical Modelling)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font-family: system-ui, Arial, sans-serif; line-height: 1.5; }
+    header, main { padding: 16px; }
+    h1,h2,h3 { margin: 8px 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .media, .app { background: color-mix(in srgb, #777 7%, transparent); padding: 12px; border-radius: 8px; }
+    figure { margin: 0 0 12px 0; }
+    figure img, figure video { width: 100%; border-radius: 8px; }
+    canvas { width: 100%; height: 480px; border: 1px solid #999; border-radius: 8px; background: #1a1a1a; display: block; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    code.kbd { background:#eee; color:#333; padding:2px 6px; border-radius:4px; border:1px solid #ccc; }
+    ul { padding-left: 18px; }
+    pre.tree {
+      background: #0d1117; color: #c9d1d9; padding: 12px; border-radius: 8px; overflow:auto;
+      border: 1px solid #30363d; font-size: 0.95rem;
+    }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #aaa; padding: 6px 8px; }
+    th { background: #ddd; }
+    footer { padding:16px; font-size: 0.9rem; color:#666; }
+  </style>
+    <script src="https://cdn.jsdelivr.net/npm/gl-matrix@3.4.3/gl-matrix-min.js"></script>
+
+
+  <!-- Vertex Shader -->
+  <script id="vs" type="x-shader/x-vertex">
+  precision highp float;
+  attribute vec3 a_position;
+  attribute vec3 a_normal;
+  attribute vec2 a_texcoord;
+
+  uniform mat4 u_world;
+  uniform mat4 u_view;
+  uniform mat4 u_proj;
+  uniform mat3 u_normalMatrix;
+
+  varying vec3 v_normal;
+  varying vec3 v_worldPos;
+  varying vec2 v_uv;
+
+  void main() {
+    vec4 worldPos = u_world * vec4(a_position, 1.0);
+    v_worldPos = worldPos.xyz;
+    v_normal = normalize(u_normalMatrix * a_normal);
+    v_uv = a_texcoord;
+    gl_Position = u_proj * u_view * worldPos;
+  }
+  </script>
+
+  <!-- Fragment Shader (Phong) -->
+  <script id="fs" type="x-shader/x-fragment">
+  precision highp float;
+
+  varying vec3 v_normal;
+  varying vec3 v_worldPos;
+  varying vec2 v_uv;
+
+  uniform vec3 u_color;
+  uniform vec3 u_lightPos;
+  uniform vec3 u_viewPos;
+  uniform vec3 u_ambient;
+  uniform vec3 u_diffuseColor;
+  uniform vec3 u_specularColor;
+  uniform float u_shininess;
+
+  uniform bool u_useTexture;
+  uniform sampler2D u_sampler0;
+
+  void main() {
+    vec3 N = normalize(v_normal);
+    vec3 L = normalize(u_lightPos - v_worldPos);
+    vec3 V = normalize(u_viewPos - v_worldPos);
+    vec3 H = normalize(L + V);
+
+    float NdotL = max(dot(N, L), 0.0);
+    float spec = pow(max(dot(N, H), 0.0), u_shininess);
+
+    vec3 baseColor = u_color * u_diffuseColor;
+    if (u_useTexture) {
+      vec3 tex = texture2D(u_sampler0, v_uv).rgb;
+      baseColor *= tex;
+    }
+
+    vec3 ambient = u_ambient * baseColor;
+    vec3 diffuse = NdotL * baseColor;
+    vec3 specular = (NdotL > 0.0 ? spec : 0.0) * u_specularColor;
+
+    vec3 color = ambient + diffuse + specular;
+    gl_FragColor = vec4(color, 1.0);
+  }
+  </script>
+</head>
+<body>
+<header>
+  <h1>Tugas 2 – WebGL (Lighting, Texture, Hierarchical Modelling)</h1>
+  <h2>Objek: Kipas Angin</h2>
+  <p><strong>Nama Kelompok:</strong> <em>Ganti dengan nama & NRP</em></p>
+</header>
+
+<main class="grid">
+  <section class="media">
+    <h3>Referensi Objek Asli (di sekitar ITS)</h3>
+    <figure>
+      <figcaption>Foto Objek Asli</figcaption>
+      <!-- Ganti src dengan foto kalian -->
+      assets/foto_kipas_ITS.jpg
+    </figure>
+    <figure>
+      <figcaption>Video Objek Asli</figcaption>
+      <!-- Ganti src dengan video kalian -->
+      assets/video_kipas_ITS.mp4</video>
+    </figure>
+
+    <h3>Desain Tree Hubungan Antar Objek</h3>
+    <pre class="tree">World
+└── Arm1 (yaw: kanan–kiri, osilasi)
+    └── Cage / Housing (pitch: miringkan)
+        └── Hub
+            └── Blades (roll: putaran)
+                ├── Blade 1
+                ├── Blade 2
+                └── Blade 3
+    </pre>
+
+    <h3>Pembagian Tugas</h3>
+    <table>
+      <thead><tr><th>Nama</th><th>NRP</th><th>Tugas</th></tr></thead>
+      <tbody>
+        <tr><td>Nama 1</td><td>NRP</td><td>Hierarki & Animasi</td></tr>
+        <tr><td>Nama 2</td><td>NRP</td><td>Geometry & Lighting</td></tr>
+        <tr><td>Nama 3</td><td>NRP</td><td>Texture & Halaman Utama</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="app">
+    <h3>Canvas Aplikasi</h3>
+    <div class="row">
+      <div><span>Kontrol:</span>
+        <span class="kbd code">Space</span> pause/resume,
+        <span class="kbd code">[</span>/<span class="kbd code">]</span> pitch cage,
+        <span class="kbd code">T</span> texture,
+        <span class="kbd code">L</span> lighting
+      </div>
+    </div>
+    <canvas id="glcanvas" width="800" height="480"></canvas>
+
+    <!-- Texture opsional: hidden image sebagai sumber sampler2D -->
+    <img id="texImage" src="assets/fan_texture.jpg" alt="Texture kipas" style="display:none"i dekat foto/video untuk membandingkan kemiripan.</p>
+  </section>
+</main>
+
+<footer>
+  <p>Catatan: Jika tanpa internet, download <code>gl-matrix-min.js</code> dan ubah tag script menjadi file lokal (seperti di atas).</p>
+</footer>
+
+<!-- App JS terpisah -->
+<script src="js/fan.js"></script>
